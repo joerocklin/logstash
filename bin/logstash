@@ -2,7 +2,8 @@
 
 basedir=$(cd `dirname $0`/..; pwd)
 if [ -d "$basedir/.git" ] ; then
-  export GEM_HOME="$basedir/vendor/bundle/jruby/1.9"
+  # Replace this with an rvm check?
+  #export GEM_HOME="$basedir/vendor/bundle/jruby/1.9"
   export GEM_PATH=
 fi
 
