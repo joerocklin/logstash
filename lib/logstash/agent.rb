@@ -8,6 +8,7 @@ require "logstash/namespace"
 require "logstash/program"
 require "logstash/threadwatchdog"
 require "logstash/util"
+require "stud/task"
 require "optparse"
 require "thread"
 require "uri"
@@ -29,6 +30,7 @@ class LogStash::Agent
   attr_reader :config_path
   attr_reader :logfile
   attr_reader :verbose
+  attr_reader :configtest
 
   public
   def initialize
@@ -45,6 +47,7 @@ class LogStash::Agent
     @verbose = 0
     @filterworker_count = 1
     @watchdog_timeout = 10
+    @configtest = false
 
     @plugins = {}
     @plugins_mutex = Mutex.new
@@ -102,6 +105,10 @@ class LogStash::Agent
 
     opts.on("-l", "--log FILE", "Log to a given path. Default is stdout.") do |path|
       @logfile = path
+    end
+
+    opts.on("-t", "--configtest", "Test configuration and exit.") do |arg|
+        @configtest = true
     end
 
     opts.on("-v", "Increase verbosity") do
@@ -258,6 +265,7 @@ class LogStash::Agent
       is_yaml = false
       concatconfig = []
       paths.each do |path|
+        next if File.directory?(path)
         file = File.new(path)
         if File.extname(file) == '.yaml'
           # assume always YAML if even one file is
@@ -334,13 +342,9 @@ class LogStash::Agent
     config = read_config
 
     @logger.info("Start thread")
-    @thread = Thread.new do
+    @thread = Stud::Task.new do
       LogStash::Util::set_thread_name(self.class.name)
-      begin
-        run_with_config(config, &block)
-      rescue => e
-        @logger.warn(e.to_s)
-      end
+      run_with_config(config, &block)
     end
 
     return remaining
@@ -348,8 +352,10 @@ class LogStash::Agent
 
   public
   def wait
-    @thread.join
+    @thread.wait
     return 0
+  rescue LogStash::Plugin::ConfigurationError
+    return 1
   end # def wait
 
   private
@@ -396,7 +402,7 @@ class LogStash::Agent
 
       # If we are given a config string (run usually with 'agent -e "some config string"')
       # then set up some defaults.
-      if @config_string
+      if @config_string or @configtest
         require "logstash/inputs/stdin"
         require "logstash/outputs/stdout"
 
@@ -408,10 +414,10 @@ class LogStash::Agent
         end
 
         # If no inputs are specified, use stdin by default.
-        @inputs = [LogStash::Inputs::Stdin.new("type" => [ "stdin" ])] if @inputs.length == 0
+        @inputs = [LogStash::Inputs::Stdin.new("type" => [ "stdin" ])] if (@inputs.length == 0 or @configtest)
 
         # If no outputs are specified, use stdout in debug mode.
-        @outputs = [LogStash::Outputs::Stdout.new("debug" => [ "true" ])] if @outputs.length == 0
+        @outputs = [LogStash::Outputs::Stdout.new("debug" => [ "true" ])] if (@outputs.length == 0 or @configtest)
       end
 
       if @inputs.length == 0 or @outputs.length == 0
@@ -485,6 +491,13 @@ class LogStash::Agent
       end
       @logger.info("All plugins are started and registered.")
     end # synchronize
+
+    # exit if configtest
+    if @configtest
+      puts "Config test passed.  Exiting..."
+      shutdown
+      exit (0)
+    end
 
     # yield to a block in case someone's waiting for us to be done setting up
     # like tests, etc.

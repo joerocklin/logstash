@@ -2,8 +2,8 @@
 #   rsync
 #   wget or curl
 #
-JRUBY_VERSION=1.7.2
-ELASTICSEARCH_VERSION=0.20.2
+JRUBY_VERSION=1.7.3
+ELASTICSEARCH_VERSION=0.20.5
 #VERSION=$(shell ruby -r./lib/logstash/version -e 'puts LOGSTASH_VERSION')
 VERSION=$(shell awk -F\" '/LOGSTASH_VERSION/ {print $$2}' lib/logstash/version.rb)
 
@@ -74,6 +74,7 @@ copy-ruby-files: | build/ruby
 	@# Copy lib/ and test/ files to the root
 	$(QUIET)rsync -av --include "*/" --include "*.rb" --exclude "*" ./lib/ ./test/ ./build/ruby
 	$(QUIET)rsync -av ./spec ./build/ruby
+	$(QUIET)rsync -av ./locales ./build/ruby
 	@# Delete any empty directories copied by rsync.
 	$(QUIET)find ./build/ruby -type d -empty -delete
 
@@ -231,11 +232,13 @@ build/jar: | build build/flatgems build/monolith
 build/logstash-$(VERSION)-flatjar.jar: | build/jar
 	$(QUIET)rm -f $@
 	$(QUIET)jar cfe $@ logstash.runner -C build/jar .
-	$(QUIET)jar i $@
 	@echo "Created $@"
 
-update-jar: copy-ruby-files
+update-jar: copy-ruby-files compile build/ruby/logstash/runner.class
 	$(QUIET)jar uf build/logstash-$(VERSION)-monolithic.jar -C build/ruby .
+
+update-flatjar: copy-ruby-files compile build/ruby/logstash/runner.class
+	$(QUIET)jar uf build/logstash-$(VERSION)-flatjar.jar -C build/ruby .
 
 .PHONY: test
 test: | $(JRUBY) vendor-elasticsearch
@@ -306,3 +309,26 @@ sync-jira-components: $(addprefix create/jiracomponent/,$(subst lib/logstash/,,$
 
 create/jiracomponent/%: 
 	$(QUIET)echo "--action addComponent --project LOGSTASH --name $(subst create/jiracomponent/,,$@)" >> tmp_jira_action_list
+
+## Release note section (up to you if/how/when to integrate in docs)
+# Collect the details of:
+#  - merged pull request from GitHub since last release
+#  - issues for FixVersion from JIRA
+
+# Note on used Github logic
+# We parse the commit between the last tag (should be the last release) and HEAD 
+# to extract all the notice about merged pull requests.
+
+# Note on used JIRA release note URL
+# The JIRA Release note list all issues (even open ones) 
+# with Fix Version assigned to target version
+# So one must verify manually that there is no open issue left (TODO use JIRACLI)
+
+# This is the ID for a version item in jira, can be obtained by CLI 
+# or through the Version URL https://logstash.jira.com/browse/LOGSTASH/fixforversion/xxx
+JIRA_VERSION_ID=10820
+
+releaseNote: 
+	-$(QUIET)rm releaseNote.html
+	$(QUIET)curl -si "https://logstash.jira.com/secure/ReleaseNote.jspa?version=$(JIRA_VERSION_ID)&projectId=10020" | sed -n '/<textarea.*>/,/<\/textarea>/p' | grep textarea -v >> releaseNote.html
+	$(QUIET)ruby pull_release_note.rb

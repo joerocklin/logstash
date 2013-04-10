@@ -1,9 +1,6 @@
 require "logstash/inputs/base"
 require "logstash/namespace"
 require "logstash/util/socket_peer"
-require "socket"
-require "timeout"
-require "openssl"
 
 # Read events over a TCP socket.
 #
@@ -34,7 +31,7 @@ class LogStash::Inputs::Tcp < LogStash::Inputs::Base
   # `client` connects to a server.
   config :mode, :validate => ["server", "client"], :default => "server"
 
-  # Enable ssl (must be set for other `ssl_` options to take effect_
+  # Enable ssl (must be set for other `ssl_` options to take effect)
   config :ssl_enable, :validate => :boolean, :default => false
 
   # Verify the identity of the other end of the ssl connection against the CA
@@ -60,7 +57,10 @@ class LogStash::Inputs::Tcp < LogStash::Inputs::Base
 
   public
   def register
+    require "socket"
+    require "timeout"
     if @ssl_enable
+      require "openssl"
       @ssl_context = OpenSSL::SSL::SSLContext.new
       @ssl_context.cert = OpenSSL::X509::Certificate.new(File.read(@ssl_cert))
       @ssl_context.key = OpenSSL::PKey::RSA.new(File.read(@ssl_key),@ssl_key_passphrase)
